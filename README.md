@@ -1,45 +1,44 @@
-# Zero-Allocation, Ultra-Low-Latency Matching Engine
+# HFT Matching Engine
 
-A single-symbol ("SYM1") limit order-matching engine, built to demonstrate
-systems-engineering skills for backend / systems / performance-engineering
-interviews: zero-allocation hot paths, cache-friendly data layout, lock-free
-concurrency, raw networking, and rigorous latency benchmarking.
+A high-performance High-Frequency Trading (HFT) Matching Engine built in C++20. This project intentionally avoids real trading product overhead and focuses purely on deep systems-engineering challenges: zero heap allocation on the hot path, CPU cache locality, and lock-free concurrency.
 
-**This is not a real trading product.** The prices, the symbol, and the
-order flow are fictional; the point is the engineering underneath.
+## 🚀 Architecture & Phases
 
-## Status
+### Phase 1: Correctness-First Baseline (✅ Completed)
+- Established a naive order book baseline using `std::map` and `std::queue` to verify correctness.
+- Implemented price-time priority matching logic using fixed-point integer types (`uint64_t`) to prevent floating-point precision errors.
+- Comprehensive unit test coverage using GoogleTest.
+- Baseline performance metrics captured via Google Benchmark (Latency: ~39,720 ns per order).
 
-See [`CLAUDE.md`](CLAUDE.md) for the full project context, design decisions,
-stage plan, and current status.
+### Phase 2: High-Performance Optimizations (🚧 In Progress)
+- **Zero Heap Allocation**: Replaced dynamic heap allocations (`new`/`malloc`) with a custom fixed-capacity `MemoryPool` (Arena Allocator) to achieve $O(1)$ order allocations on the hot path.
+- **CPU Cache Locality**: (Upcoming) Transitioning from node-based dynamic containers to flat arrays and ring buffers to maximize L1/L2 cache hits.
+- **Lock-Free Concurrency**: (Upcoming) Implementing SPSC/MPSC queues to prepare the engine for multi-threaded order ingestion without lock contention.
 
-## Architecture
+## 🛠️ Tech Stack
+- **Language**: C++20
+- **Build System**: CMake, MSVC
+- **Testing**: GoogleTest (GTest)
+- **Benchmarking**: Google Benchmark
 
-```
-React + Vite dashboard  <-->  FastAPI gateway  <-->  binary TCP  <-->  C++ engine
-     (Stage 9)                  (Stage 8)            protocol       (Stages 0-7)
-```
+## ⚙️ Build & Run Instructions (Windows / MSVC)
 
-The C++ engine is the core of the project and is built and benchmarked
-completely on its own first. The gateway and dashboard are a thin,
-off-hot-path layer added afterward — the engine's correctness and latency
-numbers are never measured through them.
+1. **Configure the build**:
+   ```powershell
+   cmake -DCMAKE_BUILD_TYPE=Release -B build
 
-## Building (Windows, MSVC + Ninja)
+2. **Compile the project**:
+   ```powershell
+   cmake --build build --config Release
 
-```powershell
-./scripts/build.ps1 -Preset debug -Test
-./scripts/build.ps1 -Preset release
-```
+3. **Run unit tests**:
+   ```powershell
+   .\build\tests\Release\hft_tests.exe
 
-Or open the folder in VS Code with the CMake Tools extension, which detects
-the MSVC kit and sets up the build environment automatically.
+4. **Run Benchmarks**:
+   ```powershell
+   .\build\bench\Release\hft_bench.exe
 
-## Layout
-
-See `CLAUDE.md` for what lives in each folder and why.
-
-## Results
-
-Benchmark tables and per-stage design notes land in `docs/` starting Stage 2,
-and get rolled up here at Stage 7.
+****CRAZY ARYA****
+   
+   
