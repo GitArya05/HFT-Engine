@@ -201,17 +201,38 @@ there and when.
 
 ## Current status
 
-**Stage 0 complete.** Skeleton created: folder structure, `CMakeLists.txt`
-+ `CMakePresets.json` (MSVC + Ninja, `debug`/`release` presets),
-GoogleTest + Google Benchmark wired via FetchContent, placeholder
-smoke-test targets (`hft_server`, `hft_tests`, `hft_tests` sanity test,
-`hft_bench` sanity benchmark) to prove the build+test loop, `.gitignore`,
+**Stage 0 complete and pushed** (`ece54f2` on
+`github.com/GitArya05/HFT-Engine`). Skeleton created: folder structure,
+`CMakeLists.txt` + `CMakePresets.json` (MSVC + Ninja, `debug`/`release`
+presets), GoogleTest v1.15.2 + Google Benchmark v1.9.1 via FetchContent,
+placeholder smoke-test targets (`hft_server`, `hft_tests`, `hft_bench`) to
+prove the build+test+bench loop, `.gitignore`, `.gitattributes`,
 `.clang-format`, GitHub Actions CI (Windows build+test; Linux TSan job
 deferred to Stage 4), README skeleton, this file.
 
-Verified on this machine: MSVC `cl` 19.51 + Ninja generator configures and
-builds successfully (the VS project generator does not — see toolchain
-notes above).
+Verified end to end on this machine: both presets configure, build clean
+from scratch, and pass 1/1 test; benchmark and server executables run.
+
+Three Windows/MSVC gotchas found while verifying (all already worked
+around, don't rediscover them):
+
+1. CMake's `-G "Visual Studio 17 2022"` **cannot find this VS install**
+   ("could not find any instance of Visual Studio"). Use Ninja + vcvars.
+2. MSVC `/fsanitize=address` changes the ABI of STL types via container
+   annotations, so linking ASan objects against a non-ASan GoogleTest or
+   Benchmark fails with `LNK2038 ... 'annotate_*'`. The individual
+   `_DISABLE_*_ANNOTATION` macros are a moving target across MSVC versions
+   (`annotate_optional` was not covered by the two documented ones), so the
+   ASan flag is applied **globally** via `add_compile_options()` before
+   `FetchContent_MakeAvailable()` and every dependency is built with it.
+3. ASan-instrumented exes need `clang_rt.asan_dynamic-x86_64.dll` from the
+   MSVC toolset folder on `PATH` at **runtime**. Launched from a plain
+   terminal they die instantly with `STATUS_DLL_NOT_FOUND`
+   (exit `-1073741515`) and no message. Run them via `scripts/run.ps1`.
+
+Google Benchmark's configure log reports `HAVE_PTHREAD_AFFINITY`,
+`HAVE_POSIX_REGEX` and `CMAKE_HAVE_LIBC_PTHREAD` as failed — expected on
+Windows, it falls back to its Win32 paths. Not an error.
 
 **Next:** Stage 1, Step 1 — design `include/hft/types.hpp` (the `Price`,
 `Qty`, `OrderId`, `Side` type aliases) and the `Order` struct.
