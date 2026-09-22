@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows-build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Install Ninja
+        run: choco install ninja -y
+      - name: Configure
+        run: cmake --preset debug
+      - name: Build
+        run: cmake --build --preset debug
+      - name: Test
+        run: ctest --preset debug --output-on-failure
+
+  # Stage 4 adds a linux-tsan job here: an ubuntu-latest runner building the
+  # concurrency code (SPSC ring buffer + matching/network threads) with
+  # GCC/Clang -fsanitize=thread. Windows has no reliable ThreadSanitizer, so
+  # this is how the lock-free code gets verified race-free. Not needed until
+  # that code exists.
