@@ -1,4 +1,4 @@
-# CLAUDE.md — Zero-Allocation, Ultra-Low-Latency Matching Engine
+# DOC.md — Zero-Allocation, Ultra-Low-Latency Matching Engine
 
 This file is the persistent context for working on this project with
 Claude. Read it at the start of every session.
