@@ -1,56 +1,85 @@
-#pragma once
+#ifndef HFT_ORDERBOOK_HPP
+#define HFT_ORDERBOOK_HPP
 
-#include "hft/order.hpp"
-#include "hft/types.hpp"
-
+#include <array>
 #include <cstdint>
-#include <map>
-#include <queue>
-#include <vector>
+#include "hft/memory_pool.hpp"
+#include "hft/order.hpp"
 
 namespace hft {
 
-struct Trade {
-    OrderId buy_order_id;
-    OrderId sell_order_id;
-    Price price;
-    Quantity quantity;
-    Timestamp timestamp;
+struct PriceLevel {
+    uint64_t price{0};
+    uint32_t total_volume{0};
+    Order* head{nullptr};
+    Order* tail{nullptr};
+
+    inline void append(Order* order) {
+        order->next = nullptr;
+        order->prev = tail;
+
+        if (tail) {
+            tail->next = order;
+        } else {
+            head = order;
+        }
+
+        tail = order;
+        total_volume += order->quantity;
+    }
+
+    inline void remove(Order* order) {
+        if (order->prev) {
+            order->prev->next = order->next;
+        } else {
+            head = order->next;
+        }
+
+        if (order->next) {
+            order->next->prev = order->prev;
+        } else {
+            tail = order->prev;
+        }
+
+        total_volume -= order->quantity;
+        order->next = nullptr;
+        order->prev = nullptr;
+    }
+
+    inline bool is_empty() const {
+        return head == nullptr;
+    }
 };
 
 class OrderBook {
 public:
-    OrderBook() = default;
-    ~OrderBook() = default;
+    static constexpr size_t MAX_PRICE_TICKS = 100000;
+    static constexpr size_t MAX_ORDERS = 100000;
 
-    OrderBook(const OrderBook&) = delete;
-    OrderBook& operator=(const OrderBook&) = delete;
+    OrderBook();
 
-    OrderBook(OrderBook&&) noexcept = default;
-    OrderBook& operator=(OrderBook&&) noexcept = default;
+    void add_order(uint64_t id, uint64_t price, uint32_t qty, bool is_buy);
+    void cancel_order(Order* order);
 
-    void add_order(Order order);
-    bool cancel_order(OrderId order_id, Price price, bool is_buy);
-
-    Price get_best_bid() const;
-    Price get_best_ask() const;
-    bool has_bids() const {
-        return !bids_.empty();
+    uint64_t get_best_bid() const {
+        return best_bid_;
     }
-    bool has_asks() const {
-        return !asks_.empty();
-    }
-
-    const std::vector<Trade>& get_trade_history() const {
-        return trade_history_;
+    uint64_t get_best_ask() const {
+        return best_ask_;
     }
 
 private:
-    std::map<Price, std::queue<Order>, std::greater<Price>> bids_;
-    std::map<Price, std::queue<Order>> asks_;
-    std::vector<Trade> trade_history_;
+    OrderPool<MAX_ORDERS> order_pool_;
 
-    void match_orders();
+    std::array<PriceLevel, MAX_PRICE_TICKS> bids_;
+    std::array<PriceLevel, MAX_PRICE_TICKS> asks_;
+
+    uint64_t best_bid_{0};
+    uint64_t best_ask_{MAX_PRICE_TICKS - 1};
+
+    void match_order(Order* inbound_order);
 };
 
 }  // namespace hft
+
+#endif  // HFT_ORDERBOOK_HPP

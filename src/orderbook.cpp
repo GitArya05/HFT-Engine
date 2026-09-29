@@ -1,126 +1,137 @@
 #include "hft/orderbook.hpp"
-
 #include <algorithm>
 
 namespace hft {
 
-void OrderBook::add_order(Order order) {
-    if (order.quantity == 0) {
-        return;
+OrderBook::OrderBook() {
+    // Initialize inside market to extremes
+    best_bid_ = 0;
+    best_ask_ = MAX_PRICE_TICKS - 1;
+}
+
+void OrderBook::add_order(uint64_t id, uint64_t price, uint32_t qty, bool is_buy) {
+    // 1. O(1) Allocation from MemoryPool (Zero Heap Allocation)
+    Order* order = order_pool_.allocate(id, price, qty, is_buy);
+    if (!order) {
+        return;  // Pool exhausted (in production, handle failure gracefully)
     }
 
-    // Place the order in the appropriate side of the book
-    if (order.is_buy) {
-        bids_[order.price].push(order);
+    // 2. Attempt to cross the spread and match aggressively
+    match_order(order);
+
+    // 3. If the order isn't fully filled, add remaining qty to the resting book
+    if (order->quantity > 0) {
+        if (is_buy) {
+            bids_[price].append(order);
+            // Update best bid if necessary
+            if (price > best_bid_) {
+                best_bid_ = price;
+            }
+        } else {
+            asks_[price].append(order);
+            // Update best ask if necessary
+            if (price < best_ask_) {
+                best_ask_ = price;
+            }
+        }
     } else {
-        asks_[order.price].push(order);
-    }
-
-    // Trigger matching logic immediately after insertion
-    match_orders();
-}
-
-void OrderBook::match_orders() {
-    while (!bids_.empty() && !asks_.empty()) {
-        auto best_bid_it = bids_.begin();
-        auto best_ask_it = asks_.begin();
-
-        Price best_bid_price = best_bid_it->first;
-        Price best_ask_price = best_ask_it->first;
-
-        // No crossing condition: highest bid is lower than lowest ask
-        if (best_bid_price < best_ask_price) {
-            break;
-        }
-
-        auto& bid_queue = best_bid_it->second;
-        auto& ask_queue = best_ask_it->second;
-
-        Order& buy_order = bid_queue.front();
-        Order& sell_order = ask_queue.front();
-
-        // Calculate fill quantity
-        Quantity traded_qty = std::min(buy_order.quantity, sell_order.quantity);
-
-        // Trade price priority: Resting (maker) order price determines trade price
-        Price trade_price =
-            (buy_order.timestamp < sell_order.timestamp) ? buy_order.price : sell_order.price;
-
-        Timestamp trade_time = std::max(buy_order.timestamp, sell_order.timestamp);
-
-        // Log trade execution
-        trade_history_.push_back(Trade{.buy_order_id = buy_order.order_id,
-                                       .sell_order_id = sell_order.order_id,
-                                       .price = trade_price,
-                                       .quantity = traded_qty,
-                                       .timestamp = trade_time});
-
-        // Mutate order quantities
-        buy_order.quantity -= traded_qty;
-        sell_order.quantity -= traded_qty;
-
-        // Pop fully filled orders and clean empty price levels
-        if (buy_order.quantity == 0) {
-            bid_queue.pop();
-            if (bid_queue.empty()) {
-                bids_.erase(best_bid_it);
-            }
-        }
-
-        if (sell_order.quantity == 0) {
-            ask_queue.pop();
-            if (ask_queue.empty()) {
-                asks_.erase(best_ask_it);
-            }
-        }
+        // Order was completely filled immediately; recycle the memory slot
+        order_pool_.deallocate(order);
     }
 }
 
-bool OrderBook::cancel_order(OrderId order_id, Price price, bool is_buy) {
-    auto process_cancellation = [order_id](auto& map, Price p) -> bool {
-        auto it = map.find(p);
-        if (it == map.end()) {
-            return false;
-        }
+void OrderBook::match_order(Order* inbound) {
+    if (inbound->is_buy) {
+        // Buy order: Match against resting Asks (lowest price first)
+        while (inbound->quantity > 0 && best_ask_ <= inbound->price &&
+               best_ask_ < MAX_PRICE_TICKS) {
+            PriceLevel& level = asks_[best_ask_];
+            Order* resting = level.head;
 
-        auto& q = it->second;
-        std::queue<Order> updated_q;
-        bool found = false;
+            while (resting != nullptr && inbound->quantity > 0) {
+                uint32_t fill_qty = std::min(inbound->quantity, resting->quantity);
 
-        // Naive $O(N)$ linear reconstruction of std::queue for order removal
-        while (!q.empty()) {
-            Order current = q.front();
-            q.pop();
-            if (current.order_id == order_id && !found) {
-                found = true;
-            } else {
-                updated_q.push(current);
+                // Execute trade (In a real system, generate trade events here)
+                inbound->quantity -= fill_qty;
+                resting->quantity -= fill_qty;
+                level.total_volume -= fill_qty;  // Deduct volume manually during match
+
+                Order* next_resting = resting->next;  // Cache next pointer before removal
+
+                // If resting order is fully filled, remove from list and deallocate
+                if (resting->quantity == 0) {
+                    level.remove(resting);
+                    order_pool_.deallocate(resting);
+                }
+
+                resting = next_resting;
+            }
+
+            // If price level is completely drained, advance best_ask_ upward
+            if (level.is_empty()) {
+                best_ask_++;
             }
         }
+    } else {
+        // Sell order: Match against resting Bids (highest price first)
+        while (inbound->quantity > 0 && best_bid_ >= inbound->price && best_bid_ > 0) {
+            PriceLevel& level = bids_[best_bid_];
+            Order* resting = level.head;
 
-        if (found) {
-            it->second = std::move(updated_q);
-            if (it->second.empty()) {
-                map.erase(it);
+            while (resting != nullptr && inbound->quantity > 0) {
+                uint32_t fill_qty = std::min(inbound->quantity, resting->quantity);
+
+                // Execute trade
+                inbound->quantity -= fill_qty;
+                resting->quantity -= fill_qty;
+                level.total_volume -= fill_qty;
+
+                Order* next_resting = resting->next;
+
+                // If resting order is fully filled, remove from list and deallocate
+                if (resting->quantity == 0) {
+                    level.remove(resting);
+                    order_pool_.deallocate(resting);
+                }
+
+                resting = next_resting;
             }
-            return true;
+
+            // If price level is completely drained, advance best_bid_ downward
+            if (level.is_empty()) {
+                best_bid_--;
+            }
         }
-        return false;
-    };
-
-    return is_buy ? process_cancellation(bids_, price) : process_cancellation(asks_, price);
+    }
 }
 
-Price OrderBook::get_best_bid() const {
-    if (bids_.empty())
-        return 0;
-    return bids_.begin()->first;
-}
+void OrderBook::cancel_order(Order* order) {
+    if (!order)
+        return;
 
-Price OrderBook::get_best_ask() const {
-    if (asks_.empty())
-        return 0;
-    return asks_.begin()->first;
+    // Determine side and access the specific price level
+    if (order->is_buy) {
+        bids_[order->price].remove(order);
+
+        // Downward walk to find the new best_bid_ if we drained the top level
+        if (order->price == best_bid_ && bids_[best_bid_].is_empty()) {
+            while (best_bid_ > 0 && bids_[best_bid_].is_empty()) {
+                best_bid_--;
+            }
+        }
+    } else {
+        asks_[order->price].remove(order);
+
+        // Upward walk to find the new best_ask_ if we drained the top level
+        if (order->price == best_ask_ && asks_[best_ask_].is_empty()) {
+            while (best_ask_ < MAX_PRICE_TICKS - 1 && asks_[best_ask_].is_empty()) {
+                best_ask_++;
+            }
+        }
+    }
+
+    // Recycle the memory slot
+    order_pool_.deallocate(order);
 }
 
 }  // namespace hft

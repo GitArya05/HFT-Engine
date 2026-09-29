@@ -1,21 +1,26 @@
-#pragma once
+#ifndef HFT_ORDER_HPP
+#define HFT_ORDER_HPP
 
-#include "hft/types.hpp"
+#include <cstdint>
 
 namespace hft {
 
-/// Represents a single resting or incoming order in the matching engine.
 struct Order {
-    OrderId order_id;
-    Price price;
-    Quantity quantity;
-    bool is_buy;
-    Timestamp timestamp;
-
     Order() = default;
 
-    Order(OrderId id, Price p, Quantity q, bool buy, Timestamp ts)
-        : order_id(id), price(p), quantity(q), is_buy(buy), timestamp(ts) {}
+    uint64_t id;
+    uint64_t price;  // Represented as integer ticks to avoid floating-point math
+    uint32_t quantity;
+    bool is_buy;
+
+    // Intrusive doubly-linked list pointers for O(1) queue operations
+    Order* next{nullptr};
+    Order* prev{nullptr};
+
+    Order(uint64_t id_, uint64_t price_, uint32_t qty_, bool buy_)
+        : id(id_), price(price_), quantity(qty_), is_buy(buy_) {}
 };
 
 }  // namespace hft
+
+#endif  // HFT_ORDER_HPP

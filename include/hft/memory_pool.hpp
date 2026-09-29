@@ -52,7 +52,7 @@ public:
         assert(idx < Capacity);
 
         order->~Order();  // Explicit destructor call
-        free_indices_[free_count++] = idx;
+        free_indices_[free_count_++] = idx;
     }
 
     void reset() {

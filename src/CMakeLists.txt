@@ -1,22 +1,7 @@
-# Create a static library for the engine core.
-# This allows both the main executable and future unit tests to link to the same logic.
-add_library(hft_core
-    orderbook.cpp
-)
+# 1. Create a library for the core engine logic (Tests & Benchmarks will link to this)
+add_library(hft_engine orderbook.cpp)
+target_include_directories(hft_engine PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
-# Specify the include directories. 
-# PUBLIC ensures that any target linking to hft_core also gets this include path.
-target_include_directories(hft_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
-)
-
-# Enforce C++20 for designated initializers (e.g., .buy_order_id = ...)
-target_compile_features(hft_core PUBLIC cxx_std_20)
-
-# Create the primary executable
-add_executable(hft_engine
-    main.cpp
-)
-
-# Link the engine core library to the executable
-target_link_libraries(hft_engine PRIVATE hft_core)
+# 2. Create the main executable separately
+add_executable(hft_main main.cpp)
+target_link_libraries(hft_main PRIVATE hft_engine)
