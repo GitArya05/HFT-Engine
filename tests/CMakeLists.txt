@@ -1,6 +1,8 @@
 add_executable(hft_tests 
-    types_test.cpp 
+    types_test.cpp
     test_memory_pool.cpp
+    test_ring_buffer.cpp
+    test_network.cpp
 )
 
 target_link_libraries(hft_tests PRIVATE 
