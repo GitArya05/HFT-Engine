@@ -5,18 +5,14 @@
 
 namespace hft {
 
-using OrderId = uint64_t;
-using Price = uint64_t;
-using Quantity = uint32_t;
-using Timestamp = uint64_t;
+// Ensures our atomic variables are on separate cache lines to prevent false sharing
+constexpr std::size_t CACHE_LINE_SIZE = 64;
 
-inline constexpr std::size_t CACHE_LINE_SIZE = 64;
-
-enum class OrderType : uint8_t {
-    LIMIT = 0,
-    IOC = 1,     // Immediate-Or-Cancel
-    FOK = 2,     // Fill-Or-Kill
-    ICEBERG = 3  // Iceberg (Hidden Quantity)
+enum class OrderType {
+    LIMIT,
+    GTC,  // Good 'Til Canceled
+    IOC,  // Immediate or Cancel
+    FOK   // Fill or Kill
 };
 
 }  // namespace hft

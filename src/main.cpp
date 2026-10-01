@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -22,27 +23,30 @@ struct InboundOrderMessage {
 };
 
 int main() {
-    // 1. Maximize process priority at startup to reduce OS scheduling jitter
     hft::maximize_process_priority();
 
     constexpr int NUM_GATEWAYS = 4;
     constexpr uint32_t ORDERS_PER_GATEWAY = 25000;
     constexpr uint64_t TOTAL_ORDERS = NUM_GATEWAYS * ORDERS_PER_GATEWAY;
-    constexpr size_t QUEUE_CAPACITY = 131072;  // Power of 2 >= TOTAL_ORDERS
+    constexpr size_t QUEUE_CAPACITY = 131072;
 
     std::cout << "========================================================\n";
     std::cout << "   HFT MATCHING ENGINE: LIVE ORCHESTRATION SIMULATION\n";
     std::cout << "========================================================\n";
     std::cout << " Configuration:\n";
     std::cout << " - Gateway Producer Threads: " << NUM_GATEWAYS << "\n";
-    std::cout << " - Orders per Gateway:        " << ORDERS_PER_GATEWAY << "\n";
-    std::cout << " - Total Orders to Process:   " << TOTAL_ORDERS << "\n";
-    std::cout << " - Inbound Protocol:          NASDAQ OUCH 5.0 (Binary Wire)\n";
-    std::cout << " - Core Allocation:           Core 0 (Engine), Cores 1-4 (Gateways)\n";
+    std::cout << " - Orders per Gateway:       " << ORDERS_PER_GATEWAY << "\n";
+    std::cout << " - Total Orders to Process:  " << TOTAL_ORDERS << "\n";
+    std::cout << " - Core Allocation:          Core 0 (Engine), Cores 1-4 (Gateways), Core 5 "
+                 "(Market Data)\n";
     std::cout << "--------------------------------------------------------\n\n";
 
+    // Heap allocation to prevent stack overflow
     auto order_queue = std::make_unique<hft::MPSCQueue<InboundOrderMessage, QUEUE_CAPACITY>>();
     auto order_book = std::make_unique<hft::OrderBook>();
+    auto itch_queue = std::make_unique<hft::MarketDataQueue>();
+
+    order_book->set_market_data_queue(itch_queue.get());
 
     std::atomic<uint64_t> processed_count{0};
     std::atomic<bool> producers_done{false};
@@ -51,18 +55,39 @@ int main() {
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    // 2. Launch Matching Engine Thread on Core 0 (Time-Critical Priority)
+    // 1. Launch Market Data Publisher Thread (Core 5)
+    std::thread market_data_thread([&]() {
+        hft::configure_current_thread(5);
+
+        hft::ItchMessage md_msg;
+        uint64_t messages_published = 0;
+
+        while (true) {
+            if (itch_queue->pop(md_msg)) {
+                messages_published++;
+            } else if (producers_done.load(std::memory_order_acquire) &&
+                       processed_count.load(std::memory_order_relaxed) == TOTAL_ORDERS &&
+                       itch_queue->empty()) {
+                break;
+            } else {
+#if defined(_MSC_VER)
+                _mm_pause();
+#endif
+            }
+        }
+    });
+
+    // 2. Launch Matching Engine Thread (Core 0)
     std::thread engine_thread([&]() {
-        hft::configure_current_thread(0);  // Pin to Core 0
+        hft::configure_current_thread(0);
 
         InboundOrderMessage msg;
         while (true) {
             if (order_queue->pop(msg)) {
                 order_book->add_order(msg.id, msg.price, msg.qty, msg.is_buy, msg.type);
                 uint64_t current_processed = ++processed_count;
-                if (current_processed == TOTAL_ORDERS) {
+                if (current_processed == TOTAL_ORDERS)
                     break;
-                }
             } else if (producers_done.load(std::memory_order_acquire) &&
                        processed_count.load(std::memory_order_relaxed) == TOTAL_ORDERS) {
                 break;
@@ -74,24 +99,22 @@ int main() {
         }
     });
 
-    // 3. Launch Gateway Producer Threads on Cores 1 through 4
+    // 3. Launch Gateway Producer Threads (Cores 1-4)
     std::vector<std::thread> gateways;
     gateways.reserve(NUM_GATEWAYS);
 
     for (int i = 0; i < NUM_GATEWAYS; ++i) {
         gateways.emplace_back([i, ORDERS_PER_GATEWAY, &order_queue]() {
-            hft::configure_current_thread(i + 1);  // Pin to Cores 1, 2, 3, 4
+            hft::configure_current_thread(i + 1);
 
             uint64_t base_id = static_cast<uint64_t>(i + 1) * 1000000ULL;
             for (uint32_t j = 0; j < ORDERS_PER_GATEWAY; ++j) {
                 uint64_t id = base_id + j;
-                uint64_t price = 10000 + (j % 100);
+                uint64_t price = 50000 + (j % 100);
                 uint32_t qty = 100 + ((j % 5) * 10);
                 bool is_buy = (j % 2 == 0);
-                hft::OrderType type = hft::OrderType::LIMIT;
 
-                // Change this:
-                while (!order_queue->emplace(id, price, qty, is_buy, type)) {
+                while (!order_queue->emplace(id, price, qty, is_buy, hft::OrderType::LIMIT)) {
 #if defined(_MSC_VER)
                     _mm_pause();
 #endif
@@ -100,14 +123,11 @@ int main() {
         });
     }
 
-    // Wait for all gateway producer threads to complete order generation
-    for (auto& gw : gateways) {
-        gw.join();
-    }
+    // Await completion
+    for (auto& gw : gateways) gw.join();
     producers_done.store(true, std::memory_order_release);
-
-    // Wait for engine thread to finish draining the queue and matching orders
     engine_thread.join();
+    market_data_thread.join();
 
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();

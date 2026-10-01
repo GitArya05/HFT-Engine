@@ -1,5 +1,4 @@
-#ifndef HFT_ORDER_HPP
-#define HFT_ORDER_HPP
+#pragma once
 
 #include <cstdint>
 #include "hft/types.hpp"
@@ -7,18 +6,15 @@
 namespace hft {
 
 struct Order {
-    OrderId id{0};
-    Price price{0};
-    Quantity quantity{0};         // Current visible quantity
-    Quantity hidden_quantity{0};  // Remaining undisclosed quantity (Iceberg)
-    Quantity peak_quantity{0};    // Max visible size per slice (Iceberg)
-    bool is_buy{false};
+    uint64_t id{0};
+    double price{0.0};
+    uint32_t quantity{0};
+    uint32_t hidden_quantity{0};
+    uint32_t peak_quantity{0};
+    bool is_buy{true};
     OrderType type{OrderType::LIMIT};
-
-    Order* next{nullptr};
     Order* prev{nullptr};
+    Order* next{nullptr};
 };
 
 }  // namespace hft
-
-#endif  // HFT_ORDER_HPP
