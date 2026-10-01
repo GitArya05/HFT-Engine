@@ -1,10 +1,12 @@
 #ifndef HFT_ORDERBOOK_HPP
 #define HFT_ORDERBOOK_HPP
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include "hft/memory_pool.hpp"
 #include "hft/order.hpp"
+#include "hft/types.hpp"
 
 namespace hft {
 
@@ -58,7 +60,9 @@ public:
 
     OrderBook();
 
-    void add_order(uint64_t id, uint64_t price, uint32_t qty, bool is_buy);
+    void add_order(uint64_t id, uint64_t price, uint32_t qty, bool is_buy,
+                   OrderType type = OrderType::LIMIT, uint32_t display_qty = 0);
+
     void cancel_order(Order* order);
 
     uint64_t get_best_bid() const {
@@ -77,7 +81,8 @@ private:
     uint64_t best_bid_{0};
     uint64_t best_ask_{MAX_PRICE_TICKS - 1};
 
-    void match_order(Order* inbound_order);
+    bool has_sufficient_fok_liquidity(uint64_t price, uint32_t required_qty, bool is_buy) const;
+    void match_order(Order* inbound);
 };
 
 }  // namespace hft
