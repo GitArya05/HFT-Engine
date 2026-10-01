@@ -5,10 +5,10 @@ add_executable(hft_tests
     test_network.cpp
 )
 
-target_link_libraries(hft_tests PRIVATE 
-    hft_engine 
-    GTest::gtest 
-    GTest::gtest_main
+target_link_libraries(hft_tests PRIVATE
+    hft_engine
+    gtest
+    gtest_main
 )
 
 include(GoogleTest)

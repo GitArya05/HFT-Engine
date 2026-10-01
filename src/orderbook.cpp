@@ -71,7 +71,7 @@ void OrderBook::add_order(uint64_t id, uint64_t price, uint32_t qty, bool is_buy
     if (inbound->quantity > 0 || inbound->hidden_quantity > 0) {
         if (type == OrderType::IOC || type == OrderType::FOK) {
             // Cancel remaining unfilled volume immediately
-            order_pool_.free(inbound);
+            order_pool_.deallocate(inbound);
         } else {
             // Limit and Iceberg rest on the book
             if (is_buy) {
@@ -85,7 +85,7 @@ void OrderBook::add_order(uint64_t id, uint64_t price, uint32_t qty, bool is_buy
             }
         }
     } else {
-        order_pool_.free(inbound);
+        order_pool_.deallocate(inbound);
     }
 }
 
@@ -117,7 +117,7 @@ void OrderBook::match_order(Order* inbound) {
                         level.append(resting);  // Re-append loses time priority
                     } else {
                         level.remove(resting);
-                        order_pool_.free(resting);
+                        order_pool_.deallocate(resting);
                     }
                 }
 
@@ -156,7 +156,7 @@ void OrderBook::match_order(Order* inbound) {
                         level.append(resting);
                     } else {
                         level.remove(resting);
-                        order_pool_.free(resting);
+                        order_pool_.deallocate(resting);
                     }
                 }
 
@@ -184,7 +184,7 @@ void OrderBook::cancel_order(Order* order) {
     } else {
         asks_[order->price].remove(order);
     }
-    order_pool_.free(order);
+    order_pool_.deallocate(order);
 }
 
 }  // namespace hft

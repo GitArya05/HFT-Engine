@@ -1,14 +1,13 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <utility>
+#include "hft/types.hpp"
 
-// Hardware Intrinsics for CPU Cache Prefetching
 #if defined(_MSC_VER)
 #include <intrin.h>
-#else
-#include <xmmintrin.h>
 #endif
 
 namespace hft {
@@ -17,81 +16,77 @@ template <typename T, std::size_t Capacity>
 class MPSCQueue {
     static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
 
-    struct alignas(64) Cell {
-        std::atomic<std::size_t> sequence;
+    struct Node {
+        std::atomic<std::size_t> sequence{0};
         T data;
     };
 
 public:
-    MPSCQueue() {
+    MPSCQueue() : tail_(0), head_(0) {
         for (std::size_t i = 0; i < Capacity; ++i) {
             buffer_[i].sequence.store(i, std::memory_order_relaxed);
         }
-        enqueue_pos_.store(0, std::memory_order_relaxed);
-        dequeue_pos_.store(0, std::memory_order_relaxed);
     }
-
-    MPSCQueue(const MPSCQueue&) = delete;
-    MPSCQueue& operator=(const MPSCQueue&) = delete;
 
     template <typename... Args>
     bool emplace(Args&&... args) {
-        Cell* cell = nullptr;
-        std::size_t pos = enqueue_pos_.load(std::memory_order_relaxed);
+        Node* node;
+        std::size_t pos = tail_.load(std::memory_order_relaxed);
 
-        for (;;) {
-            cell = &buffer_[pos & mask_];
-            std::size_t seq = cell->sequence.load(std::memory_order_acquire);
-            intptr_t dif = static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos);
+        while (true) {
+            node = &buffer_[pos & (Capacity - 1)];
+            std::size_t seq = node->sequence.load(std::memory_order_acquire);
+            intptr_t diff = static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos);
 
-            // C++20 [[likely]]: We assume the queue usually has space
-            if (dif == 0) [[likely]] {
-                if (enqueue_pos_.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed))
-                    [[likely]] {
+            if (diff == 0) {
+                if (tail_.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed)) {
                     break;
                 }
-            } else if (dif < 0) [[unlikely]] {
-                return false;  // Queue is full
+            } else if (diff < 0) {
+#if defined(_MSC_VER)
+                _mm_pause();
+#endif
+                return false;  // Queue full
             } else {
-                pos = enqueue_pos_.load(std::memory_order_relaxed);
+                pos = tail_.load(std::memory_order_relaxed);
             }
         }
 
-        cell->data = T(std::forward<Args>(args)...);
-        cell->sequence.store(pos + 1, std::memory_order_release);
+        node->data = T(std::forward<Args>(args)...);
+        node->sequence.store(pos + 1, std::memory_order_release);
         return true;
     }
 
-    bool pop(T& item) {
-        std::size_t pos = dequeue_pos_.load(std::memory_order_relaxed);
-        Cell* cell = &buffer_[pos & mask_];
+    bool pop(T& val) {
+        Node* node = &buffer_[head_ & (Capacity - 1)];
+        std::size_t seq = node->sequence.load(std::memory_order_acquire);
+        intptr_t diff = static_cast<intptr_t>(seq) - static_cast<intptr_t>(head_ + 1);
 
-        // Asynchronously prefetch the NEXT cell into the CPU L1 cache
-#if defined(_MSC_VER)
-        _mm_prefetch(reinterpret_cast<const char*>(&buffer_[(pos + 1) & mask_]), _MM_HINT_T0);
-#else
-        __builtin_prefetch(&buffer_[(pos + 1) & mask_], 0, 3);
-#endif
-
-        std::size_t seq = cell->sequence.load(std::memory_order_acquire);
-        intptr_t dif = static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos + 1);
-
-        // C++20 [[likely]]: In a busy market, popping usually succeeds
-        if (dif == 0) [[likely]] {
-            item = std::move(cell->data);
-            cell->sequence.store(pos + mask_ + 1, std::memory_order_release);
-            dequeue_pos_.store(pos + 1, std::memory_order_relaxed);
+        if (diff == 0) {
+            val = std::move(node->data);
+            node->sequence.store(head_ + Capacity, std::memory_order_release);
+            ++head_;
             return true;
         }
+
+#if defined(_MSC_VER)
+        _mm_pause();
+#endif
 
         return false;
     }
 
 private:
-    static constexpr std::size_t mask_ = Capacity - 1;
-    alignas(64) Cell buffer_[Capacity];
-    alignas(64) std::atomic<std::size_t> enqueue_pos_;
-    alignas(64) std::atomic<std::size_t> dequeue_pos_;
+    // Isolate producer state to prevent false sharing
+    alignas(CACHE_LINE_SIZE) std::atomic<std::size_t> tail_{0};
+    uint8_t pad_producer_[CACHE_LINE_SIZE - sizeof(std::atomic<std::size_t>)]{};
+
+    // Isolate consumer state (single consumer, cache-line aligned)
+    alignas(CACHE_LINE_SIZE) std::size_t head_{0};
+    uint8_t pad_consumer_[CACHE_LINE_SIZE - sizeof(std::size_t)]{};
+
+    // Tightly packed ring buffer
+    std::array<Node, Capacity> buffer_;
 };
 
 }  // namespace hft
