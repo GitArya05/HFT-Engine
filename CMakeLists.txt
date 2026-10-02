@@ -13,7 +13,8 @@ add_library(hft_engine
 
 # 2. Main Live Orchestration Executable
 add_executable(hft_sim src/main.cpp)
-target_link_libraries(hft_sim PRIVATE hft_engine)
+target_link_libraries(hft_sim PRIVATE hft_engine Ws2_32)
+
 
 # 3. Third-Party Dependencies
 include(FetchContent)
